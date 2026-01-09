@@ -146,7 +146,7 @@ If you don’t have a wildcard cert and prefer Let’s Encrypt HTTP-01:
 - **DNS mismatch**: `server_name` must match the domain you access.
 
 ## License
-MIT License — feel free to adapt for internal use.
+Apache License 2.0.
 
 ## Credits
 Built with Flask and xmltodict.
