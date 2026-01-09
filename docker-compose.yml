@@ -1,0 +1,25 @@
+services:
+  converter:
+    build: ./app
+    image: json-xml-converter-rt-tree:latest
+    environment:
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY}
+      MAX_INPUT_SIZE: ${MAX_INPUT_SIZE:-2097152}
+    restart: unless-stopped
+    networks: [proxy-net]
+
+  nginx:
+    image: nginx:alpine
+    depends_on: [converter]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx-conf:/etc/nginx/conf.d:ro
+      - ./certs:/etc/nginx/certs:ro
+    networks: [proxy-net]
+    restart: unless-stopped
+
+networks:
+  proxy-net:
+    driver: bridge

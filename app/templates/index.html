@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid">
+  <div class="card">
+    <h2>Input</h2>
+    <label for="direction">Conversion Direction</label>
+    <select id="direction" required>
+      <option value="json_to_xml">JSON → XML</option>
+      <option value="xml_to_json">XML → JSON</option>
+    </select>
+
+    <div id="rootWrapper" class="root-wrapper">
+      <label for="root_name">Root Element (for JSON → XML)</label>
+      <input type="text" id="root_name" placeholder="root" value="root">
+    </div>
+
+    <label for="content">Paste JSON or XML</label>
+    <textarea id="content" rows="14" placeholder='{"hello":"world"}'></textarea>
+
+    <div id="clientAlert" class="alert" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <div class="header-row">
+      <h2>Previews</h2>
+      <div class="actions">
+        <button id="exportBtn" class="btn" title="Download converted payload">Export Converted</button>
+      </div>
+    </div>
+    <div class="previews two-col">
+      <div class="preview">
+        <div class="preview-header">
+          <h3>As‑is</h3>
+          <div class="view-toggle">
+            <label><input type="radio" name="asIsView" value="raw" checked> Raw</label>
+            <label><input type="radio" name="asIsView" value="tree"> Tree</label>
+          </div>
+        </div>
+        <div class="preview-body">
+          <pre><code id="asIs"></code></pre>
+          <div id="asIsTree" class="tree" style="display:none"></div>
+        </div>
+      </div>
+      <div class="preview">
+        <div class="preview-header">
+          <h3>To‑be (Converted)</h3>
+          <div class="view-toggle">
+            <label><input type="radio" name="convertedView" value="raw" checked> Raw</label>
+            <label><input type="radio" name="convertedView" value="tree"> Tree</label>
+          </div>
+        </div>
+        <div class="preview-body">
+          <pre><code id="converted"></code></pre>
+          <div id="convertedTree" class="tree" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const directionEl = document.getElementById('direction');
+  const rootWrapperEl = document.getElementById('rootWrapper');
+  const rootEl = document.getElementById('root_name');
+  const contentEl = document.getElementById('content');
+  const asIsEl = document.getElementById('asIs');
+  const convertedEl = document.getElementById('converted');
+  const asIsTreeEl = document.getElementById('asIsTree');
+  const convertedTreeEl = document.getElementById('convertedTree');
+  const alertEl = document.getElementById('clientAlert');
+  const exportBtn = document.getElementById('exportBtn');
+
+  const debounce = (fn, d) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), d); }; };
+
+  function showAlert(msg, type='danger') { alertEl.textContent = msg; alertEl.className = 'alert ' + type; alertEl.style.display = 'block'; }
+  function hideAlert() { alertEl.style.display = 'none'; }
+  function updateRootVisibility() { rootWrapperEl.style.display = directionEl.value === 'json_to_xml' ? 'block' : 'none'; }
+  function updateAsIsRaw() { asIsEl.textContent = contentEl.value; }
+
+  function renderTrees() {
+    const asIsView = document.querySelector('input[name="asIsView"]:checked').value;
+    const convertedView = document.querySelector('input[name="convertedView"]:checked').value;
+
+    document.querySelector('#asIs').parentElement.style.display = (asIsView === 'raw') ? 'block' : 'none';
+    asIsTreeEl.style.display = (asIsView === 'tree') ? 'block' : 'none';
+    document.querySelector('#converted').parentElement.style.display = (convertedView === 'raw') ? 'block' : 'none';
+    convertedTreeEl.style.display = (convertedView === 'tree') ? 'block' : 'none';
+
+    asIsTreeEl.innerHTML = ''; convertedTreeEl.innerHTML = '';
+    const inputText = contentEl.value.trim();
+    const outText = convertedEl.textContent.trim();
+
+    if (asIsView === 'tree' && inputText) {
+      if (directionEl.value === 'json_to_xml') {
+        try { const obj = JSON.parse(inputText); window.renderJsonTree(obj, asIsTreeEl); }
+        catch(e){ asIsTreeEl.textContent = 'Invalid JSON'; }
+      } else {
+        const parsed = window.parseXmlSafe(inputText); if (parsed) window.renderXmlTree(parsed, asIsTreeEl); else asIsTreeEl.textContent = 'Invalid XML';
+      }
+    }
+
+    if (convertedView === 'tree' && outText) {
+      if (directionEl.value === 'json_to_xml') {
+        const parsed = window.parseXmlSafe(outText); if (parsed) window.renderXmlTree(parsed, convertedTreeEl); else convertedTreeEl.textContent = 'Invalid XML';
+      } else {
+        try { const obj = JSON.parse(outText); window.renderJsonTree(obj, convertedTreeEl); }
+        catch(e){ convertedTreeEl.textContent = 'Invalid JSON'; }
+      }
+    }
+  }
+
+  async function convertRealtime() {
+    hideAlert(); convertedEl.textContent = '';
+    const payload = contentEl.value.trim();
+    if (!payload) { updateAsIsRaw(); renderTrees(); return; }
+    const maxBytes = 2 * 1024 * 1024; const bytesLen = new Blob([payload]).size; if (bytesLen > maxBytes) { showAlert('Input too large. Please keep under 2 MB.'); return; }
+    updateAsIsRaw(); let url='', body={};
+    if (directionEl.value === 'json_to_xml') { url='/api/json-to-xml'; body={ payload: payload, root_name: rootEl.value || 'root' }; }
+    else { url='/api/xml-to-json'; body={ payload: payload }; }
+    try {
+      const res = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json(); if (!res.ok) { showAlert(data && data.error ? data.error : ('HTTP ' + res.status)); return; }
+      convertedEl.textContent = data.xml || data.json || '';
+    } catch(err){ showAlert('Conversion failed: ' + err.message); }
+    renderTrees();
+  }
+
+  function exportConverted() {
+    const content = convertedEl.textContent || '';
+    if (!content) { showAlert('Nothing to export.'); return; }
+    const isXml = directionEl.value === 'json_to_xml';
+    const mime = isXml ? 'application/xml' : 'application/json';
+    const ext = isXml ? 'xml' : 'json';
+    const blob = new Blob([content], { type: mime + ';charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'converted.' + ext; document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+  }
+
+  const debouncedConvert = debounce(convertRealtime, 300);
+  directionEl.addEventListener('change', () => { updateRootVisibility(); debouncedConvert(); });
+  rootEl.addEventListener('input', debouncedConvert);
+  contentEl.addEventListener('input', debouncedConvert);
+  exportBtn.addEventListener('click', exportConverted);
+  document.querySelectorAll('input[name="asIsView"]').forEach(r => r.addEventListener('change', renderTrees));
+  document.querySelectorAll('input[name="convertedView"]').forEach(r => r.addEventListener('change', renderTrees));
+
+  updateRootVisibility(); updateAsIsRaw(); renderTrees();
+</script>
+{% endblock %}
